@@ -1,0 +1,1714 @@
+---
+title: "COS1"
+author: "Gabriel Paiva"
+format: html
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+# Packages
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(tidyverse)
+library(readxl)
+library(easyanova)
+library(agricolae)
+library(easyanova)
+library(gsheet)
+library(ggrepel)
+library(ggthemes)
+library(patchwork)
+library(emmeans)
+library(multcomp)
+library(car)
+```
+
+# GH 1
+## Sev
+```{r}
+trial_1gh <- read_excel("data.xlsx") %>%
+  mutate(sev = ((spikelet_symptomatic)/spikelet_total)*100,
+         product = case_when(product == "0" ~ "NTC",
+                                 product == "chitosan" ~ "Chitosan",
+                                 product == "tebuconazole" ~ "Tebuconazole"),
+         treatment = case_when(dose == "c0" ~ "Chi 0",
+                                 dose == "c-5" ~ "Chi -5",
+                                 dose == "c-2" ~ "Chi -2",
+                                 dose == "c+2" ~ "Chi +2",
+                                 dose == "test0" ~ "NTC",
+                                 dose == "t0" ~ "Tebuc 0",
+                                 dose == "t-5" ~ "Tebuc -5",
+                                 dose == "t-2" ~ "Tebuc -2",
+                                 dose == "t+2" ~ "Tebuc +2"),
+         treatment = factor(treatment, levels = c("Chi -5", "Chi -2", "Chi 0","Chi +2","Tebuc -5", 
+                                        "Tebuc -2", "Tebuc 0","Tebuc +2","NTC"))) %>% 
+  group_by(treatment,dose, product, trat, conc, rep, dpi) %>% 
+  summarise(sev_mean = mean(sev))
+
+trial_1_audpc <- trial_1gh %>% 
+  do(broom::tidy(agricolae::audpc(.$sev_mean, .$dpi))) %>% 
+  dplyr::select("audpc" = x) %>% 
+  filter(trat != "ninoc") 
+
+unique(trial_1gh$product)
+```
+
+### Summaries
+#### Sev 
+```{r}
+trial_1gh %>% 
+  ggplot(aes(treatment, sev_mean, fill =product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  facet_grid(trat~dpi) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "Severity (%)")
+
+trial_1gh %>% 
+  ggplot(aes(x = sev_mean))+
+  geom_histogram()+
+  theme_bw()+
+  facet_wrap(trat~dpi)
+
+linhas_trial_1 <- trial_1gh%>% 
+  group_by(treatment, product, dpi) %>% 
+  summarise(sev_mean2 = mean(sev_mean, na.rm=TRUE), 
+           sd = sd(sev_mean, na.rm=TRUE),
+           n = length(sev_mean),
+           se = sd / sqrt(n),
+           ic = qt(0.975, df = n - 1) * se) %>% 
+  ggplot(aes(dpi,sev_mean2, color = treatment)) +
+  geom_point() +
+  geom_line() +
+  ggthemes::scale_color_calc()+
+  geom_errorbar(aes(ymin = sev_mean2 - se, ymax = sev_mean2 + se), width = 0.3, alpha =0.5) +
+  theme_bw()+
+  facet_grid(~product)+
+  theme(legend.position = "none",
+        legend.margin=margin(0,0,-.3,0,unit="cm")
+        )+
+  ylim(0, 40)+
+  labs(x = "DAI", y = "Severity (%)")
+
+trial_1gh %>% 
+  group_by(trat, treatment) %>% 
+  rstatix::get_summary_stats(sev_mean, type = "full")
+```
+
+#### AUDPC 
+```{r}
+trial_1_audpc %>% 
+  filter(trat != "ninoc") %>% 
+  ggplot(aes(x = audpc))+
+  geom_histogram()+
+  theme_bw()
+
+trial_1_audpc %>% 
+  ggplot(aes(treatment, audpc, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+trial_1_audpc %>% 
+  group_by(trat,treatment) %>% 
+  rstatix::get_summary_stats(audpc, type = "full")
+```
+
+### Stats
+```{r}
+modelo <- aov(sqrt(audpc) ~ treatment, data = trial_1_audpc )
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~"treatment" , type="response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+### Multcomp
+```{r}
+sev_trial_1 <- diferencas_letras %>% 
+  left_join(trial_1_audpc) %>% 
+  mutate(control = round((1-(response/261.4))*100,1)) %>% 
+  ggplot() +
+  geom_point(aes(treatment, response, color = product), size = 3) +
+  geom_errorbar(aes(treatment, response, color = product, ymin = lower.CL, ymax = upper.CL), size = 1,width = 0)+
+  geom_point(aes(treatment, response, color = product), size = 3) +
+  geom_jitter(aes(treatment, audpc), size= 1, width =0.1, alpha = 0.7)+
+  labs (x = "",
+        y = "AUDPC",
+        color = "Products") +
+  ggthemes::scale_color_calc()+
+  theme_bw() +
+  geom_text(aes(x = treatment, y = upper.CL +20, 
+                label = .group))+
+  ylim(-10,500)+
+  theme(legend.position = "none", 
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0.1, 0.1, -0.5, 0.1), "cm"),
+        legend.margin=margin(0,0,-.3,0,unit="cm"))
+```
+
+## Plant height
+```{r}
+plant_height_1gh <- read_excel("data.xlsx", 3) %>%
+  mutate(product = case_when(product == "0" ~ "Testemunha",
+                                 product == "chitosan" ~ "Quitosana",
+                                 product == "tebuconazole" ~ "Tebuconazol"),
+         treatment = case_when(dose == "c0" ~ "Qui 0",
+                                 dose == "c-5" ~ "Qui -5",
+                                 dose == "c-2" ~ "Qui -2",
+                                 dose == "c+2" ~ "Qui +2",
+                                 dose == "test0" ~ "Testemunha",
+                                 dose == "t0" ~ "Tebuc 0",
+                                 dose == "t-5" ~ "Tebuc -5",
+                                 dose == "t-2" ~ "Tebuc -2",
+                                 dose == "t+2" ~ "Tebuc +2"),
+         treatment = factor(treatment, levels = c("Qui -5", "Qui -2", "Qui 0","Qui +2","Tebuc -5", 
+                                        "Tebuc -2", "Tebuc 0","Tebuc +2","Testemunha"))) %>%
+  group_by(treatment, dose, product, trat, conc, rep) %>% 
+  summarise(height_mean = mean(height, na.rm=TRUE))
+```
+
+### Summaries
+```{r}
+plant_height_1gh %>% 
+  ggplot(aes(treatment, height_mean, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  facet_grid(~trat) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "Severity (%)")
+
+plant_height_1gh %>% 
+  ggplot(aes(x = height_mean))+
+  geom_histogram()+
+  theme_bw()+
+  facet_wrap(~trat)
+
+plant_height_1gh %>% 
+  group_by(trat, treatment) %>% 
+  rstatix::get_summary_stats(height_mean, type = "full")
+```
+
+#### Stats
+```{r}
+modelo <- aov(height_mean ~ treatment*trat, data = plant_height_1gh)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~treatment*trat, type="response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+## PMS/FDK 1
+```{r}
+pms_fdk_1gh <- read_excel("data.xlsx", 5) %>%
+  mutate(treatment = case_when(product == "chitosan0" ~ "Qui 0",
+                                 product == "chitosan5-" ~ "Qui -5",
+                                 product == "chitosan2-" ~ "Qui -2",
+                                 product == "chitosan2+" ~ "Qui +2",
+                                 product == "test" ~ "Testemunha",
+                                 product == "tebuconazole0" ~ "Tebuc 0",
+                                 product == "tebuconazole5-" ~ "Tebuc -5",
+                                 product == "tebuconazole2-" ~ "Tebuc -2",
+                                 product == "tebuconazole2+" ~ "Tebuc +2"),
+         products = case_when(product == "chitosan0" ~ "Quitosana",
+                                 product == "chitosan5-" ~ "Quitosana",
+                                 product == "chitosan2-" ~ "Quitosana",
+                                 product == "chitosan2+" ~ "Quitosana",
+                                 product == "test" ~ "Testemunha",
+                                 product == "tebuconazole0" ~ "Tebuconazol",
+                                 product == "tebuconazole5-" ~ "Tebuconazol",
+                                 product == "tebuconazole2-" ~ "Tebuconazol",
+                                 product == "tebuconazole2+" ~ "Tebuconazol"),
+         treatment = factor(treatment, levels = c("Qui -5", "Qui -2", "Qui 0","Qui +2","Tebuc -5",
+                                        "Tebuc -2", "Tebuc 0","Tebuc +2","Testemunha")),
+         weight_1000 = as.numeric(weight_1000)) %>%
+  group_by(treatment, conc, product,products, trat,  rep) %>% 
+  summarise(pms_mean = mean(weight_1000, na.rm=TRUE),
+            fdk_mean = mean(`%gibberella`, na.rm=TRUE))
+```
+
+### Summaries
+#### PMS 
+```{r}
+pms_fdk_1gh %>% 
+  ggplot(aes(treatment, pms_mean, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  facet_grid(~trat) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "PMS (g)")
+
+pms_fdk_1gh %>% 
+  ggplot(aes(x = pms_mean))+
+  geom_histogram()+
+  theme_bw()+
+  facet_wrap(~trat)
+
+pms_fdk_1gh %>% 
+  group_by(trat, treatment) %>% 
+  rstatix::get_summary_stats(pms_mean, type = "full")
+```
+
+#### FDK 
+```{r}
+pms_fdk_1gh %>% 
+  ggplot(aes(treatment, fdk_mean, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  facet_grid(~trat) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "FDK (%)")
+
+pms_fdk_1gh %>% 
+  ggplot(aes(x = fdk_mean))+
+  geom_histogram()+
+  theme_bw()+
+  facet_wrap(~trat)
+
+pms_fdk_1gh %>% 
+  group_by(trat, treatment) %>% 
+  rstatix::get_summary_stats(fdk_mean, type = "full")
+```
+
+### Stats
+#### PMS
+```{r}
+modelo <- aov(pms_mean ~ treatment*trat, data = pms_fdk_1gh )
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~ treatment*trat, type="response")
+means_modelo
+
+summary(means_modelo, by = "treatment")
+summary(means_modelo, by = "trat")
+
+# checking significant interaction within each factor.
+pairs(means_modelo, by = "treatment")
+summary(means_modelo, by = "trat")
+
+cld (means_modelo)
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+cv.model(modelo)
+
+## treatment
+emms <-  emmeans(means_modelo, ~ treatment|trat, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## trat
+emms <-  emmeans(means_modelo, ~ trat|treatment, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+```
+
+#### FDK
+```{r}
+modelo <- aov(sqrt(fdk_mean) ~ treatment*trat, data = pms_fdk_1gh)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+plot(simulateResiduals(modelo))
+
+means_modelo <- emmeans (modelo, ~ treatment*trat, type="response")
+means_modelo
+
+summary(means_modelo, by = "treatment")
+summary(means_modelo, by = "trat")
+
+# checking significant interaction within each factor.
+pairs(means_modelo, by = "treatment")
+summary(means_modelo, by = "trat")
+
+cld (means_modelo)
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+cv.model(modelo)
+
+## treatment
+emms <-  emmeans(means_modelo, ~ treatment|trat, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## trat
+emms <-  emmeans(means_modelo, ~ trat|treatment, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+```
+
+# Trial Dose 1
+## Sev
+```{r}
+dose_1 <-  read_excel("data.xlsx", 8) %>%
+  mutate(sev = ((spikelet_symptomatic)/spikelet_total)*100,
+         product = case_when(product == "test0" ~ "Mock",
+                                 product == "test" ~ "NTC",
+                                 product == "chitosan" ~ "Chitosan",
+                                 product == "tebuconazole" ~ "Tebuconazole")) %>%
+  group_by(product, conc,rep, dpi) %>% 
+  summarise(sev_mean = mean(sev))%>% 
+  unite(Tratamentos, product, conc, sep = " ", remove = FALSE) %>% 
+  mutate(Tratamentos = factor(Tratamentos, levels = c("Chitosan 500", "Chitosan 1000", "Chitosan 2000","Chitosan 3000", "Tebuconazole 2.5", "Mock 0", "NTC 0")))
+
+dose_1_audpc <- dose_1 %>% 
+  do(broom::tidy(agricolae::audpc(.$sev_mean, .$dpi))) %>% 
+  dplyr::select("audpc" = x) %>% 
+  unite(Tratamentos, product, conc, sep = " ", remove = FALSE)%>% 
+  mutate(Tratamentos = factor(Tratamentos, levels = c("Chitosan 500", "Chitosan 1000", "Chitosan 2000","Chitosan 3000", "Tebuconazole 2.5", "Mock 0", "NTC 0")))%>% 
+  filter(Tratamentos != "Mock 0")
+```
+
+## Summaries
+### Sev 
+```{r}
+dose_1 %>% 
+  ggplot(aes(Tratamentos, sev_mean, fill =product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "Severidade (%)")
+
+dose_1 %>% 
+  ggplot(aes(x = sev_mean))+
+  geom_histogram()+
+  theme_bw()
+
+linhas_dose_1 <- dose_1 %>% 
+  group_by(Tratamentos, product, dpi) %>% 
+  summarise(sev_mean2 = mean(sev_mean, na.rm=TRUE), 
+           sd = sd(sev_mean, na.rm=TRUE),
+           n = length(sev_mean),
+           se = sd / sqrt(n),
+           ic = qt(0.975, df = n - 1) * se) %>% 
+  ggplot(aes(dpi,sev_mean2, color = Tratamentos)) +
+  geom_point() +
+  geom_line() +
+  ggthemes::scale_color_calc()+
+  geom_errorbar(aes(ymin = sev_mean2 - se, ymax = sev_mean2 + se), width = 0.3, alpha =0.5) +
+  theme_bw()+
+  facet_grid(~product)+
+  theme(legend.position = "top",
+        legend.margin=margin(0,0,-.3,0,unit="cm")
+        )+ylim(0,80)+
+  labs(x = "Dias após inoculação", y = "Severidade (%)")
+
+dose_1 %>% 
+  group_by(Tratamentos) %>% 
+  rstatix::get_summary_stats(sev_mean, type = "full")
+```
+
+### AUDPC 
+```{r}
+dose_1_audpc %>%
+  ggplot(aes(x = audpc))+
+  geom_histogram()+
+  theme_bw()
+
+dose_1_audpc %>% 
+  ggplot(aes(Tratamentos, audpc, fill =product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+dose_1_audpc %>% 
+  group_by(Tratamentos) %>% 
+  rstatix::get_summary_stats(audpc, type = "full")
+```
+
+### Stats
+```{r}
+modelo <- aov(audpc ~ Tratamentos, data = dose_1_audpc)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~"Tratamentos" , type="response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+### Multcomp
+```{r}
+sev_dose_1 <- diferencas_letras %>% 
+  left_join(dose_1_audpc) %>% 
+  mutate(control = round((1-(emmean/241.17))*100,1),
+         lower.CL = case_when(lower.CL < 0 ~ 0,
+                            TRUE ~ lower.CL)) %>% 
+  ggplot() +
+  geom_point(aes(Tratamentos, emmean, color = product), size = 3) +
+  geom_errorbar(aes(Tratamentos, emmean, color = product, ymin = lower.CL, ymax = upper.CL), size = 1,width = 0)+
+  geom_point(aes(Tratamentos, emmean, color = product), size = 3) +
+  geom_jitter(aes(Tratamentos, audpc), size= 1, width =0.1, alpha = 0.7)+
+  labs (x = "",
+        y = "AUDPC",
+        color = "Products") +
+  ggthemes::scale_color_calc()+
+  theme_bw() +
+  geom_text(aes(x = Tratamentos, y = upper.CL +20, 
+                label = .group))+
+  ylim(-10,400)+
+  theme(legend.position = "none", 
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0.1, 0.1, -0.5, 0.1), "cm"),
+        legend.margin=margin(0,0,-.3,0,unit="cm"))
+```
+
+## Plant height dose 1
+```{r}
+plant_height_1dose <- read_excel("data.xlsx", 10) %>%
+  mutate(product = case_when(product == "test0" ~ "Mock",
+                                 product == "test" ~ "NTC",
+                                 product == "chitosan" ~ "Chitosan",
+                                 product == "tebuconazole" ~ "Tebuconazole")) %>% 
+  group_by(product, conc,rep) %>% 
+  summarise(height_mean = mean(height, na.rm=TRUE)) %>% 
+  unite(treatments, product, conc, sep = " ", remove = FALSE) %>% 
+  mutate(treatments = factor(treatments, levels = c("Chitosan 500", "Chitosan 1000", "Chitosan 2000","Chitosan 3000", "Tebuconazole 2.5", "Mock 0",  "NTC 0")))
+```
+
+### Summaries
+### Sev 
+```{r}
+plant_height_1dose %>% 
+  ggplot(aes(treatments, height_mean, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "Severity (%)")
+
+plant_height_1dose %>% 
+  ggplot(aes(x = height_mean))+
+  geom_histogram()+
+  theme_bw()
+
+plant_height_1dose %>% 
+  group_by(treatments) %>% 
+  rstatix::get_summary_stats(height_mean, type = "full")
+```
+
+### Stats
+```{r}
+modelo <- aov(height_mean ~ treatments, data = plant_height_1dose)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+```
+
+## PMS/FDK dose1
+```{r}
+pms_fdk_1dose <- read_excel("data.xlsx", 12) %>% 
+  mutate(product = case_when(product == "test0" ~ "Mock",
+                                 product == "test" ~ "NTC",
+                                 product == "chitosan" ~ "Chitosan",
+                                 product == "tebuconazole" ~ "Tebuconazole"),
+         weight_1000 = as.numeric(weight_1000)) %>% 
+  group_by(product, conc,rep) %>% 
+  summarise(pms_mean = mean(weight_1000, na.rm=TRUE),
+            fdk_mean = mean(`%gibberella`, na.rm=TRUE)) %>% 
+  unite(treatment, product, conc, sep = " ", remove = FALSE) %>%
+  mutate(treatment = factor(treatment, levels = c("Chitosan 500", "Chitosan 1000", "Chitosan 2000","Chitosan 3000", "Tebuconazole 2.5", "Mock 0", "NTC 0")))
+```
+
+### Summaries
+### PMS 
+```{r}
+pms_fdk_1dose %>% 
+  ggplot(aes(treatment, pms_mean, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "PMS (g)")
+
+pms_fdk_1dose %>% 
+  ggplot(aes(x = pms_mean))+
+  geom_histogram()+
+  theme_bw()
+
+pms_fdk_1dose %>% 
+  group_by(Tratamentos) %>% 
+  rstatix::get_summary_stats(pms_mean, type = "full")
+```
+
+### FDK 
+```{r}
+pms_fdk_1dose %>% 
+  ggplot(aes(treatment, fdk_mean, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "FDK (%)")
+
+pms_fdk_1dose %>% 
+  ggplot(aes(x = fdk_mean))+
+  geom_histogram()+
+  theme_bw()
+
+pms_fdk_1dose %>% 
+  group_by(Tratamentos) %>% 
+  rstatix::get_summary_stats(fdk_mean, type = "full")
+```
+
+### Stats
+#### PMS
+```{r}
+modelo <- aov(pms_mean ~ treatment, data = pms_fdk_1dose)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~ treatment, type = "response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+#### FDK
+```{r}
+modelo <- aov(fdk_mean ~ treatment, data = pms_fdk_1dose)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+plot(simulateResiduals(modelo))
+
+means_modelo <- emmeans (modelo, ~ treatment, type = "response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+#### Multcomp
+```{r}
+fdk_dose_1 <- diferencas_letras %>% 
+  left_join(pms_dose1) %>% 
+  mutate(control = round((1-(emmean/53.5))*100,1),
+         lower.CL = case_when(lower.CL < 0 ~ 0,
+                            TRUE ~ lower.CL)) %>%
+  ggplot() +
+  geom_errorbar(aes(Tratamentos, emmean, color = product, ymin = lower.CL, ymax = upper.CL), size = 1, width = 0.1)+
+  geom_point(aes(Tratamentos, emmean, color = product), size = 3)+
+  labs (x = "",
+        y = "Grãos gibrelados (%)",
+        color = "Produtos") +
+  ggthemes::scale_color_calc()+
+  theme_bw() +
+  geom_text(aes(x = Tratamentos, y = upper.CL +5,
+                label = .group))+
+  geom_text(aes(x = Tratamentos, y = -2,
+                label = control),size = 5)+
+  theme(legend.position = "none", 
+        axis.text.x=element_blank(),
+        plot.margin = unit(c(0.1, 0.1, -0.5, 0.1), "cm"),
+        legend.margin=margin(0,0,-.3,0,unit="cm")
+        )+
+  ylim(-2,80)
+
+  ggsave("figs/dose_trial1/fdk.png", width=7, height=4 , dpi=400)
+```
+
+# GH 2
+## Sev
+```{r}
+trial_2gh <- read_excel("data.xlsx", 2) %>%
+  mutate(sev = ((spikelet_symptomatic)/spikelet_total)*100,
+         product = case_when(product == "0" ~ "NTC",
+                                 product == "chitosan" ~ "Chitosan",
+                                 product == "tebuconazole" ~ "Tebuconazole"),
+         treatment = case_when(dose == "c0" ~ "Chi 0",
+                                 dose == "c-5" ~ "Chi -5",
+                                 dose == "c-2" ~ "Chi -2",
+                                 dose == "c+2" ~ "Chi +2",
+                                 dose == "test0" ~ "NTC",
+                                 dose == "t0" ~ "Tebuc 0",
+                                 dose == "t-5" ~ "Tebuc -5",
+                                 dose == "t-2" ~ "Tebuc -2",
+                                 dose == "t+2" ~ "Tebuc +2"),
+         treatment = factor(treatment, levels = c("Chi -5", "Chi -2", "Chi 0","Chi +2","Tebuc -5", 
+                                        "Tebuc -2", "Tebuc 0","Tebuc +2","NTC"))) %>% 
+  group_by(treatment,dose, product, trat, conc, rep, dpi) %>% 
+  summarise(sev_mean = mean(sev))
+  
+trial_2_audpc <- trial_2gh %>% 
+  do(broom::tidy(agricolae::audpc(.$sev_mean, .$dpi))) %>% 
+  dplyr::select("audpc" = x) %>% 
+  filter(trat != "ninoc") 
+```
+
+## Summaries
+### Sev 
+```{r}
+trial_2gh %>% 
+  ggplot(aes(treatment, sev_mean, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  facet_grid(trat~dpi) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "Severidade (%)")
+
+trial_2gh %>% 
+  ggplot(aes(x = sev_mean))+
+  geom_histogram()+
+  theme_bw()+
+  facet_wrap(trat~dpi)
+
+linhas_trial_2 <- trial_2gh%>% 
+  group_by(treatment, product, dpi) %>% 
+  summarise(sev_mean2 = mean(sev_mean, na.rm=TRUE), 
+           sd = sd(sev_mean, na.rm=TRUE),
+           n = length(sev_mean),
+           se = sd / sqrt(n),
+           ic = qt(0.975, df = n - 1) * se) %>% 
+  ggplot(aes(dpi,sev_mean2, color = treatment)) +
+  geom_point() +
+  geom_line() +
+  ggthemes::scale_color_calc()+
+  geom_errorbar(aes(ymin = sev_mean2 - se, ymax = sev_mean2 + se), width = 0.3, alpha =0.5) +
+  theme_bw()+
+  facet_grid(~product)+
+  theme(legend.margin=margin(0,0,-.3,0,unit="cm")
+        )+
+  ylim(0,40)+
+  labs(x = "DAI", y = "Severity (%)")
+
+(linhas_trial_1 | linhas_trial_2) +
+  plot_annotation(tag_levels = 'A')
+
+ggsave("figs/comb_sev_time.png", width = 8, height = 3, dpi = 600)
+
+trial_2gh %>% 
+  group_by(trat, treatment) %>% 
+  rstatix::get_summary_stats(sev_mean, type = "full")
+```
+
+### AUDPC 
+```{r}
+trial_2_audpc %>% 
+  filter(trat != "ninoc") %>% 
+  ggplot(aes(x = audpc))+
+  geom_histogram()+
+  theme_bw()
+
+trial_2_audpc %>% 
+  ggplot(aes(treatment, audpc, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+trial_2_audpc %>% 
+  group_by(trat,treatment) %>% 
+  rstatix::get_summary_stats(audpc, type = "full")
+```
+
+### Stats
+```{r}
+modelo <- aov(audpc ~ treatment, data = trial_2_audpc)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~"treatment" , type="response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+#### Multcomp
+```{r}
+sev_trial_2 <-  diferencas_letras %>% 
+  left_join(trial_2_audpc) %>% 
+  mutate(control = round((1-(emmean/196.1))*100,1)) %>% 
+  ggplot() +
+  geom_point(aes(treatment, emmean, color = product), size = 3) +
+  geom_errorbar(aes(treatment, emmean, color = product, ymin = lower.CL, ymax = upper.CL), size = 1,width = 0)+
+  geom_jitter(aes(treatment, audpc), size= 1, width =0.1, alpha = 0.7)+
+  labs (x = "",
+        y = "AUDPC",
+        color = "Products") +
+  theme_bw() +
+  ggthemes::scale_color_calc()+
+  geom_text(aes(x = treatment, y = upper.CL +20, 
+                label = .group))+
+  ylim(-5,500)+
+  theme(axis.text.x = element_blank(),
+        plot.margin = unit(c(0.1, 0.1, -0.5, 0.1), "cm"),
+        legend.margin=margin(0,0,-.3,0,unit="cm"))
+
+comb_sevgh <- (sev_trial_1 | sev_trial_2) + plot_annotation(tag_levels = "A")
+```
+
+## Plant height
+```{r}
+plant_height_2gh <- read_excel("data.xlsx", 4) %>%
+  mutate(product = case_when(product == "0" ~ "Testemunha",
+                                 product == "chitosan" ~ "Quitosana",
+                                 product == "tebuconazole" ~ "Tebuconazol"),
+         treatment = case_when(dose == "c0" ~ "Qui 0",
+                                 dose == "c-5" ~ "Qui -5",
+                                 dose == "c-2" ~ "Qui -2",
+                                 dose == "c+2" ~ "Qui +2",
+                                 dose == "test0" ~ "Testemunha",
+                                 dose == "t0" ~ "Tebuc 0",
+                                 dose == "t-5" ~ "Tebuc -5",
+                                 dose == "t-2" ~ "Tebuc -2",
+                                 dose == "t+2" ~ "Tebuc +2"),
+         treatment = factor(treatment, levels = c("Qui -5", "Qui -2", "Qui 0","Qui +2","Tebuc -5", 
+                                        "Tebuc -2", "Tebuc 0","Tebuc +2","Testemunha"))) %>%
+  group_by(treatment,dose, product, trat, conc, rep) %>% 
+  summarise(height_mean = mean(height, na.rm=TRUE))
+```
+
+### Summaries
+### Sev 
+```{r}
+plant_height_2gh %>% 
+  ggplot(aes(treatment, height_mean, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  facet_grid(~trat) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "Severity (%)")
+
+plant_height_2gh %>% 
+  ggplot(aes(x = height_mean))+
+  geom_histogram()+
+  theme_bw()+
+  facet_wrap(~trat)
+
+plant_height_2gh %>% 
+  group_by(trat, treatment) %>% 
+  rstatix::get_summary_stats(height_mean, type = "full")
+```
+
+### Stats
+```{r}
+modelo <- aov(height_mean ~ treatment*trat, data = plant_height_2gh)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+# Análise das médias de severidade
+library(emmeans)
+library(multcomp)
+means_modelo <- emmeans (modelo, ~ treatment*trat, type ="response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+## PMS/FDK 2
+```{r}
+pms_fdk_2gh <- read_excel("data.xlsx", 6) %>%
+  mutate(treatment = case_when(product == "chitosan0" ~ "Qui 0",
+                                 product == "chitosan5-" ~ "Qui -5",
+                                 product == "chitosan2-" ~ "Qui -2",
+                                 product == "chitosan2+" ~ "Qui +2",
+                                 product == "test" ~ "Testemunha",
+                                 product == "tebuconazole0" ~ "Tebuc 0",
+                                 product == "tebuconazole5-" ~ "Tebuc -5",
+                                 product == "tebuconazole2-" ~ "Tebuc -2",
+                                 product == "tebuconazole2+" ~ "Tebuc +2"),
+         products = case_when(product == "chitosan0" ~ "Quitosana",
+                                 product == "chitosan5-" ~ "Quitosana",
+                                 product == "chitosan2-" ~ "Quitosana",
+                                 product == "chitosan2+" ~ "Quitosana",
+                                 product == "test" ~ "Testemunha",
+                                 product == "tebuconazole0" ~ "Tebuconazol",
+                                 product == "tebuconazole5-" ~ "Tebuconazol",
+                                 product == "tebuconazole2-" ~ "Tebuconazol",
+                                 product == "tebuconazole2+" ~ "Tebuconazol"),
+         treatment = factor(treatment, levels = c("Qui -5", "Qui -2", "Qui 0","Qui +2","Tebuc -5",
+                                        "Tebuc -2", "Tebuc 0","Tebuc +2","Testemunha")),
+         weight_1000 = as.numeric(weight_1000)) %>%
+  group_by(treatment, conc, product,products, trat,  rep) %>% 
+  summarise(pms_mean = mean(weight_1000, na.rm=TRUE),
+            fdk_mean = mean(`%gibberella`, na.rm=TRUE))
+```
+
+### Summaries
+### PMS 
+```{r}
+pms_fdk_2gh %>% 
+  ggplot(aes(treatment, pms_mean, fill =product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  facet_grid(~trat) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "Peso de mil grãos (g)")
+
+pms_fdk_2gh %>% 
+  ggplot(aes(x = pms_mean))+
+  geom_histogram()+
+  theme_bw()+
+  facet_wrap(~trat)
+
+pms_fdk_2gh %>% 
+  group_by(trat, treatment) %>% 
+  rstatix::get_summary_stats(pms_mean, type = "full")
+```
+
+### FDK 
+```{r}
+pms_fdk_2gh %>% 
+  ggplot(aes(treatment, fdk_mean, fill =product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  facet_grid(~trat) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "Grãos giberelados (%)")
+
+pms_fdk_2gh %>% 
+  ggplot(aes(x = fdk_mean))+
+  geom_histogram()+
+  theme_bw()+
+  facet_wrap(~trat)
+
+pms_fdk_2gh %>% 
+  group_by(trat, treatment) %>% 
+  rstatix::get_summary_stats(fdk_mean, type = "full")
+```
+
+### Stats
+#### PMS
+```{r}
+modelo <- aov(pms_mean ~ treatment*trat, data = pms_fdk_2gh)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~ treatment*trat, type="response")
+means_modelo
+
+summary(means_modelo, by = "treatment")
+summary(means_modelo, by = "trat")
+
+# checking significant interaction within each factor.
+pairs(means_modelo, by = "treatment")
+summary(means_modelo, by = "trat")
+
+cld (means_modelo)
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+cv.model(modelo)
+
+## treatment
+emms <-  emmeans(means_modelo, ~ treatment|trat, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## trat
+emms <-  emmeans(means_modelo, ~ trat|treatment, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+```
+
+#### FDK
+```{r}
+modelo <- aov(fdk_mean ~ treatment*trat, data = pms_fdk_2gh)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+plot(simulateResiduals(modelo))
+
+means_modelo <- emmeans (modelo, ~ treatment*trat, type="response")
+means_modelo
+
+summary(means_modelo, by = "treatment")
+summary(means_modelo, by = "trat")
+
+# checking significant interaction within each factor.
+pairs(means_modelo, by = "treatment")
+summary(means_modelo, by = "trat")
+
+cld (means_modelo)
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+cv.model(modelo)
+
+## treatment
+emms <-  emmeans(means_modelo, ~ treatment|trat, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## trat
+emms <-  emmeans(means_modelo, ~ trat|treatment, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+```
+
+# DON - GH - Time
+```{r}
+don_gh_time <- read_excel("data.xlsx", 7) %>% 
+  mutate(don = as.numeric(don),
+    treatments = case_when(dose == "c0" ~ "Chi 0",
+                                 dose == "c-5" ~ "Chi -5",
+                                 dose == "c-2" ~ "Chi -2",
+                                 dose == "c+2" ~ "Chi +2",
+                                 dose == "test0" ~ "Mock",
+                                 dose == "test" ~ "NTC",
+                                 dose == "t0" ~ "Tebuc 0",
+                                 dose == "t-5" ~ "Tebuc -5",
+                                 dose == "t-2" ~ "Tebuc -2",
+                                 dose == "t+2" ~ "Tebuc +2"),
+         treatments = factor(treatments, levels = c("Chi -5", "Chi -2", "Chi 0","Chi +2","Tebuc -5", 
+                                        "Tebuc -2", "Tebuc 0","Tebuc +2","Mock", "NTC"))) %>% 
+  filter(treatments != "Mock")
+```
+
+## Summaries
+```{r}
+don_gh_time %>% 
+  ggplot(aes(treatments, don, fill =product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "DON")
+
+don_gh_time %>% 
+  ggplot(aes(x = don))+
+  geom_histogram()+
+  theme_bw()
+
+don_exp1gh_time <- don_gh_time %>%
+  filter(exp == "Exp. 1") %>% 
+  mutate(control = round(((1-don/19491.9))*100,1)) %>% 
+  ggplot(aes(treatments, don, fill = product)) +
+  geom_col(stat = "identity", alpha =0.9, width = 0.6)+
+  ggthemes::scale_fill_calc()+
+  theme_bw()+
+  theme(legend.position = "none", 
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.margin = unit(c(-3, 0.1, 0.1, 0.1), "cm"),
+        legend.margin=margin(0,0,-.3,0,unit="cm")
+        )+
+  scale_y_continuous(breaks=seq(0,50000,10000), limits = c(0,50000), expand = c(0,0))+
+  labs(x = "Treatments", y = (expression(paste('DON', ' (', mu,'g/kg)'))), fill = "Products")
+
+don_exp1gh_time
+
+don_exp2gh_time <- don_gh_time %>%
+  filter(exp == "Exp. 2") %>% 
+  mutate(control = round(((1-don/22343.8))*100,1)) %>% 
+  ggplot(aes(treatments, don, fill = product)) +
+  geom_col(stat = "identity", alpha =0.9, width = 0.6, position = position_dodge(width = 0.5))+
+  ggthemes::scale_fill_calc()+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.margin = unit(c(-3, 0.1, 0.1, 0.1), "cm"),
+        legend.margin=margin(0,0,-.3,0,unit="cm")
+        )+
+  scale_y_continuous(breaks=seq(0,50000,10000), limits = c(0,50000), expand = c(0,0))+
+  labs(x = "Treatments", y = (expression(paste('DON', ' (', mu,'g/kg)'))), fill = "")
+
+don_exp2gh_time
+
+comb_dongh_time <- (don_exp1gh_time | don_exp2gh_time) + plot_annotation(tag_levels = "A")
+```
+
+## Comb audpc time and don
+```{r}
+(comb_sevgh / comb_dongh_time) + plot_annotation(tag_levels = "A")
+
+ggsave("figs/comb_don_sev_time.png", width = 7, height = 5, dpi = 600)
+```
+
+# Trial Dose 2
+## Sev
+```{r}
+dose_2 <-  read_excel("data.xlsx", 9) %>%
+  mutate(sev = ((spikelet_symptomatic)/spikelet_total)*100,
+         product = case_when(product == "test0" ~ "Mock",
+                                 product == "test" ~ "NTC",
+                                 product == "chitosan" ~ "Chitosan",
+                                 product == "tebuconazole" ~ "Tebuconazole")) %>% 
+  group_by(product, conc,rep, dpi) %>% 
+  summarise(sev_mean = mean(sev))%>% 
+  unite(treatment, product, conc, sep = " ", remove = FALSE) %>% 
+  
+  mutate(treatment = factor(treatment, levels = c("Chitosan 500", "Chitosan 1000", "Chitosan 2000","Chitosan 3000", "Tebuconazole 2.5", "Mock 0", "NTC 0")))
+
+dose_2_audpc <- dose_2 %>% 
+  do(broom::tidy(agricolae::audpc(.$sev_mean, .$dpi))) %>% 
+  dplyr::select("audpc" = x) %>% 
+  unite(treatment, product, conc, sep = " ", remove = FALSE)%>% 
+  mutate(treatment = factor(treatment, levels = c("Chitosan 500", "Chitosan 1000", "Chitosan 2000","Chitosan 3000", "Tebuconazole 2.5", "Mock 0", "NTC 0")))%>% 
+  filter(treatment != "Mock 0")
+```
+
+## Summaries
+### Sev 
+```{r}
+dose_2 %>% 
+  ggplot(aes(treatment, sev_mean, fill =product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "Severity (%)")
+
+dose_2 %>% 
+  ggplot(aes(x = sev_mean))+
+  geom_histogram()+
+  theme_bw()
+
+linhas_dose_2 <- dose_2 %>% 
+  group_by(treatment, product, dpi) %>% 
+  summarise(sev_mean2 = mean(sev_mean, na.rm=TRUE), 
+           sd = sd(sev_mean, na.rm=TRUE),
+           n = length(sev_mean),
+           se = sd / sqrt(n),
+           ic = qt(0.975, df = n - 1) * se) %>% 
+  ggplot(aes(dpi,sev_mean2, color = treatment)) +
+  geom_point() +
+  geom_line() +
+  ggthemes::scale_color_calc()+
+  geom_errorbar(aes(ymin = sev_mean2 - se, ymax = sev_mean2 + se), width = 0.3, alpha =0.5) +
+  theme_bw()+
+  theme(legend.position = "top",
+        legend.margin=margin(0,0,-.3,0,unit="cm")
+        )+
+  facet_grid(~product)+
+  labs(x = "DAI", y = "Severity (%)")
+
+dose_2 %>% 
+  group_by(treatment) %>% 
+  rstatix::get_summary_stats(sev_mean, type = "full")
+```
+
+### AUDPC 
+```{r}
+dose_2_audpc %>% 
+  ggplot(aes(x = audpc))+
+  geom_histogram()+
+  theme_bw()
+
+dose_2_audpc %>% 
+  ggplot(aes(treatment, audpc, fill =product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+dose_2_audpc %>% 
+  group_by(treatment) %>% 
+  rstatix::get_summary_stats(audpc, type = "full")
+```
+
+### Stats
+```{r}
+modelo <- aov(audpc ~ treatment, data = dose_2_audpc )
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~ "treatment" , type = "response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+#### Multcomp
+```{r}
+sev_dose_2 <- diferencas_letras %>% 
+  left_join(dose_2_audpc) %>% 
+  mutate(control = round((1-(emmean/286.4))*100,1),
+         lower.CL = case_when(lower.CL < 0 ~ emmean,
+                            TRUE ~ lower.CL)) %>% 
+  ggplot() +
+  geom_point(aes(treatment, emmean, color = product), size = 3) +
+  geom_errorbar(aes(treatment, emmean, color = product, ymin = lower.CL, ymax = upper.CL), size = 1,width = 0)+
+  geom_point(aes(treatment, emmean, color = product), size = 3) +
+  geom_jitter(aes(treatment, audpc), size= 1, width =0.1, alpha = 0.7)+
+  labs (x = "",
+        y = "AUDPC",
+        color = "Products") +
+  ggthemes::scale_color_calc()+
+  theme_bw() +
+  geom_text(aes(x = treatment, y = upper.CL +20, 
+                label = .group))+
+  theme(axis.text.x = element_blank(),
+       plot.margin = unit(c(0.1, 0.1, -0.5, 0.1), "cm"),
+       legend.margin=margin(0,0,-.3,0,unit="cm"))
+```
+
+```{r}
+audpc_dose <- (sev_dose_1 | sev_dose_2) + plot_annotation(tag_levels = "A")
+```
+
+# Plant height dose 2
+```{r}
+plant_height_2dose <- read_excel("data.xlsx", 11) %>%
+  mutate(product = case_when(product == "test0" ~ "Mock",
+                                 product == "test" ~ "NTC",
+                                 product == "chitosan" ~ "Chitosan",
+                                 product == "tebuconazole" ~ "Tebuconazole")) %>% 
+  group_by(product, conc, rep) %>% 
+  summarise(height_mean = mean(height, na.rm=TRUE)) %>% 
+  unite(treatment, product, conc, sep = " ", remove = FALSE) %>%
+  mutate(treatment = factor(treatment, levels = c("Chitosan 500", "Chitosan 1000", "Chitosan 2000","Chitosan 3000", "Tebuconazole 2.5", "NTC 0",  "Mock 0")))
+```
+
+### Summaries
+#### Sev 
+```{r}
+plant_height_2dose %>% 
+  ggplot(aes(treatment, height_mean, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "Severity (%)")
+
+plant_height_2dose %>% 
+  ggplot(aes(x = height_mean))+
+  geom_histogram()+
+  theme_bw()
+
+plant_height_2dose %>% 
+  group_by(treatment) %>% 
+  rstatix::get_summary_stats(height_mean, type = "full")
+```
+
+### Stats
+```{r}
+modelo <- aov(height_mean ~ treatment, data = plant_height_2dose)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~ treatment, type = "response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+## PMS/FDK dose2
+```{r}
+pms_fdk_2dose <- read_excel("data.xlsx", 13) %>% 
+  mutate(product = case_when(product == "test0" ~ "Mock",
+                                 product == "test" ~ "NTC",
+                                 product == "chitosan" ~ "Chitosan",
+                                 product == "tebuconazole" ~ "Tebuconazole"),
+         weight_1000 = as.numeric(weight_1000)) %>% 
+  group_by(product, conc,rep) %>% 
+  summarise(pms_mean = mean(weight_1000, na.rm=TRUE),
+            fdk_mean = mean(`%gibberella`, na.rm=TRUE)) %>% 
+  unite(treatment, product, conc, sep = " ", remove = FALSE) %>% 
+  mutate(treatment = factor(treatment, levels = c("Chitosan 500", "Chitosan 1000", "Chitosan 2000","Chitosan 3000", "Tebuconazole 2.5", "NTC 0", "Mock 0")))
+```
+
+### Summaries
+#### PMS 
+```{r}
+pms_fdk_2dose %>% 
+  ggplot(aes(treatment, pms_mean, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "PMS (g)")
+
+pms_fdk_2dose %>% 
+  ggplot(aes(x = pms_mean))+
+  geom_histogram()+
+  theme_bw()
+
+pms_fdk_2dose %>% 
+  group_by(treatment) %>% 
+  rstatix::get_summary_stats(pms_mean, type = "full")
+```
+
+#### FDK 
+```{r}
+pms_fdk_2dose %>% 
+  ggplot(aes(treatment, fdk_mean, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "FDK (%)")
+
+pms_fdk_2dose %>% 
+  ggplot(aes(x = fdk_mean))+
+  geom_histogram()+
+  theme_bw()
+
+pms_fdk_2dose %>% 
+  group_by(treatment) %>% 
+  rstatix::get_summary_stats(fdk_mean, type = "full")
+```
+
+### Stats
+#### PMS
+```{r}
+modelo <- aov(pms_mean ~ treatment, data = pms_fdk_2dose)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~ treatment, type = "response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+#### FDK
+```{r}
+modelo <- aov(fdk_mean ~ treatment, data = pms_fdk_2dose )
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+plot(simulateResiduals(modelo))
+
+means_modelo <- emmeans (modelo, ~ treatment, type = "response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+## DON - dose
+```{r}
+don_dose <- read_excel("data.xlsx", 14) %>% 
+  mutate(don = as.numeric(don),
+    treatment = case_when(dose == "NTC 0" ~ "NTC",
+                                 dose == "Mock" ~ "Mock",
+                                 dose == "q-500" ~ "Chi 500",
+                                 dose == "q-1000" ~ "Chi 1000",
+                                 dose == "q-2000" ~ "Chi 2000",
+                                 dose == "q-3000" ~ "Chi 3000",
+                                 dose == "t-2,5" ~ "Tebuc 2.5"),
+         treatment = factor(treatment, levels = c("Chi 500", "Chi 1000", "Chi 2000","Chi 3000","Tebuc 2.5", "Mock", "NTC")))%>% 
+  filter(treatment != "Mock")
+```
+
+## Summaries
+```{r}
+don_dose %>% 
+  ggplot(aes(treatment, don, fill =product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "DON")
+
+don_dose %>% 
+  ggplot(aes(x = don))+
+  geom_histogram()+
+  theme_bw()
+
+don_dose %>% 
+  ggplot(aes(treatment,don, fill = product)) +
+  geom_col(stat = "identity", alpha =0.8, width = 0.6, position = position_dodge(width = 0.5))+
+  ggthemes::scale_color_calc()+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  facet_grid(~exp)+
+  scale_y_continuous(breaks=seq(0,50000,10000), limits = c(0,51000), expand = c(0,0))+
+  labs(x = "Treatments", y = (expression(paste('DON', ' (', mu,'g/kg)'))), fill = "Products")
+
+don_time_exp1 <- don_dose %>%
+  filter(exp == "Exp. 1") %>% 
+  mutate(control = round(((1-don/39222.9))*100,1)) %>% 
+  ggplot(aes(treatment,don, fill = product)) +
+  geom_col(stat = "identity", alpha =0.9, width = 0.6)+
+  ggthemes::scale_fill_calc()+
+  theme_bw()+
+  theme(legend.position = "none", 
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.margin = unit(c(-3, 0.1, 0.1, 0.1), "cm"),
+        legend.margin=margin(0,0,-.3,0,unit="cm")) +
+  scale_y_continuous(breaks=seq(0,50000,10000), limits = c(0,53000), expand = c(0,0))+
+  labs(x = "Treatments", y = (expression(paste('DON', ' (', mu,'g/kg)'))), fill = "Products")
+  
+don_time_exp1
+  
+  don_time_exp2 <- don_dose %>%
+  filter(exp == "Exp. 2") %>% 
+  mutate(control = round(((1-don/23491.4))*100,1)) %>% 
+  ggplot(aes(treatment, don, fill = product)) +
+  geom_col(stat = "identity", alpha =0.9, width = 0.6, position = position_dodge(width = 0.5))+
+  ggthemes::scale_fill_calc()+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.margin = unit(c(-3, 0.1, 0.1, 0.1), "cm"),
+        legend.margin=margin(0,0,-.3,0,unit="cm")
+        )+
+  scale_y_continuous(breaks=seq(0,50000,10000), limits = c(0,53000), expand = c(0,0))+
+  labs(x = "Treatments", y = (expression(paste('DON', ' (', mu,'g/kg)'))), fill = "")
+
+don_time_exp2
+    
+don_conc <- (don_time_exp1 | don_time_exp2) + plot_annotation(tag_levels = "A")
+```
+
+## Comb audpc dose and don
+```{r}
+(audpc_dose / don_conc) + plot_annotation(tag_levels = "A")
+
+ggsave("figs/comb_don_sev_dose.png", width = 7, height = 5, dpi = 600)
+```
+
+# Field 1
+## Sev
+```{r}
+trial_field <- read_excel("data.xlsx", 15) %>%
+  mutate(sev = ((spikelet_symptomatic)/spikelet_total)*100,
+         product = case_when(product == "0" ~ "NTC",
+                                 product == "chitosan" ~ "Chitosan",
+                                 product == "tebuconazole" ~ "Tebuconazole"),
+         treatment = case_when(dose == "c0" ~ "Chi 0",
+                                 dose == "c-5" ~ "Chi -5",
+                                 dose == "c-2" ~ "Chi -2",
+                                 dose == "c+2" ~ "Chi +2",
+                                 dose == "test0" ~ "NTC",
+                                 dose == "t0" ~ "Tebuc 0",
+                                 dose == "t-5" ~ "Tebuc -5",
+                                 dose == "t-2" ~ "Tebuc -2",
+                                 dose == "t+2" ~ "Tebuc +2"),
+         treatment = factor(treatment, levels = c("Chi -5", "Chi -2", "Chi 0","Chi +2","Tebuc -5", 
+                                        "Tebuc -2", "Tebuc 0","Tebuc +2","NTC"))) %>%
+  group_by(treatment, dose, product, trat, conc, rep, dpi) %>% 
+  summarise(sev_mean = mean(sev)) %>% 
+  filter(dpi == 21,
+         trat != "ninoc")%>%
+  mutate(exp = "exp1")
+```
+
+### Summaries
+```{r}
+trial_field %>% 
+  ggplot(aes(treatment, sev_mean, fill = product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "Severity (%)")
+
+trial_field %>% 
+  ggplot(aes(x = sev_mean))+
+  geom_histogram()+
+  theme_bw()+
+  facet_wrap(trat~dpi)
+
+trial_field %>% 
+  group_by(trat, treatment) %>% 
+  rstatix::get_summary_stats(sev_mean, type = "full")
+```
+
+### Stats
+```{r}
+modelo <- aov(sqrt(sev_mean) ~ treatment, data = trial_field)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~ "treatment" , type = "response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+#### Multcomp
+```{r}
+sev_campo <- diferencas_letras %>% 
+  left_join(trial_field) %>%
+  ggplot() +
+  geom_point(aes(treatment, response, color = product), size = 3) +
+  geom_errorbar(aes(treatment, response, color = product, ymin = lower.CL, ymax = upper.CL), size = 1,width = 0)+
+  geom_jitter(aes(treatment, sev_mean), size= 1, width =0.1, alpha = 0.7)+
+  labs (x = "Treatments",
+        y = "Severity (%)",
+        color = "Products") +
+  theme_bw() +
+  ggthemes::scale_color_calc()+
+  geom_text(aes(x = treatment, y = upper.CL +2, 
+                label = .group))+
+  ylim(-2,120) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.margin = unit(c(0.1, 0.1, -0.5, 0.1), "cm"),
+        legend.margin=margin(0,0,-.3,0,unit="cm"))
+```
+
+## PMS/FDK field 1
+```{r}
+pms_fdk_1field <- read_excel("data.xlsx", 16) %>% 
+  mutate(treatment = case_when(product == "chitosan0" ~ "Chi 0",
+                                 product == "chitosan5-" ~ "Chi -5",
+                                 product == "chitosan2-" ~ "Chi -2",
+                                 product == "chitosan2+" ~ "Chi +2",
+                                 product == "test" ~ "NTC",
+                                 product == "tebuconazole0" ~ "Tebuc 0",
+                                 product == "tebuconazole5-" ~ "Tebuc -5",
+                                 product == "tebuconazole2-" ~ "Tebuc -2",
+                                 product == "tebuconazole2+" ~ "Tebuc +2"),
+         products = case_when(product == "chitosan0" ~ "Chitosan",
+                                 product == "chitosan5-" ~ "Chitosan",
+                                 product == "chitosan2-" ~ "Chitosan",
+                                 product == "chitosan2+" ~ "Chitosan",
+                                 product == "test" ~ "NTC",
+                                 product == "tebuconazole0" ~ "Tebuconazole",
+                                 product == "tebuconazole5-" ~ "Tebuconazole",
+                                 product == "tebuconazole2-" ~ "Tebuconazole",
+                                 product == "tebuconazole2+" ~ "Tebuconazole"),
+         treatment = factor(treatment, levels = c("Chi -5", "Chi -2", "Chi 0","Chi +2","Tebuc -5",
+                                        "Tebuc -2", "Tebuc 0","Tebuc +2","NTC")),
+         weight_1000 = as.numeric(weight_1000)) %>%
+  group_by(treatment, conc, product, products, trat,  rep) %>% 
+  summarise(pms_mean = mean(weight_1000, na.rm=TRUE),
+            fdk_mean = mean(`%gibberella`, na.rm=TRUE))
+```
+
+### Summaries
+#### PMS 
+```{r}
+pms_fdk_1field %>% 
+  ggplot(aes(treatment, pms_mean, fill = products))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  facet_grid(~trat) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "PMS (g)")
+
+pms_fdk_1field %>% 
+  ggplot(aes(x = pms_mean))+
+  geom_histogram()+
+  theme_bw()+
+  facet_wrap(~trat)
+
+pms_fdk_1field %>% 
+  group_by(trat, treatment) %>% 
+  rstatix::get_summary_stats(pms_mean, type = "full")
+```
+
+#### FDK 
+```{r}
+pms_fdk_1field %>% 
+  ggplot(aes(treatment, fdk_mean, fill = products))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  facet_grid(~trat) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "TKW (%)")
+
+pms_fdk_1field %>% 
+  ggplot(aes(x = fdk_mean))+
+  geom_histogram()+
+  theme_bw()+
+  facet_wrap(~trat)
+
+pms_fdk_1field %>% 
+  group_by(trat, treatment) %>% 
+  rstatix::get_summary_stats(fdk_mean, type = "full")
+```
+
+### Stats
+#### PMS
+```{r}
+modelo <- aov(pms_mean ~ treatment*trat, data = pms_fdk_1field)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~ treatment*trat, type="response")
+means_modelo
+
+summary(means_modelo, by = "treatment")
+summary(means_modelo, by = "trat")
+
+# checking significant interaction within each factor.
+pairs(means_modelo, by = "treatment")
+summary(means_modelo, by = "trat")
+
+cld (means_modelo)
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+cv.model(modelo)
+
+## treatment
+emms <-  emmeans(means_modelo, ~ treatment|trat, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## trat
+emms <-  emmeans(means_modelo, ~ trat|treatment, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+```
+
+#### FDK
+```{r}
+modelo <- aov(fdk_mean ~ treatment*trat, data = pms_fdk_1field)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~ treatment*trat, type="response")
+means_modelo
+
+summary(means_modelo, by = "treatment")
+summary(means_modelo, by = "trat")
+
+# checking significant interaction within each factor.
+pairs(means_modelo, by = "treatment")
+summary(means_modelo, by = "trat")
+
+cld (means_modelo)
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+cv.model(modelo)
+
+## treatment
+emms <-  emmeans(means_modelo, ~ treatment|trat, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## trat
+emms <-  emmeans(means_modelo, ~ trat|treatment, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+```
+
+# Field 2
+## Sev
+```{r}
+trial_field2 <- read_excel("data.xlsx", 17) %>%
+  mutate(sev = ((spikelet_symptomatic)/spikelet_total)*100,
+         product = case_when(product == "0" ~ "NTC",
+                                 product == "chitosan" ~ "Chitosan",
+                                 product == "tebuconazole" ~ "Tebuconazole"),
+         treatment = case_when(dose == "c0" ~ "Chi 0",
+                                 dose == "c-5" ~ "Chi -5",
+                                 dose == "c-2" ~ "Chi -2",
+                                 dose == "c+2" ~ "Chi +2",
+                                 dose == "test0" ~ "NTC",
+                                 dose == "t0" ~ "Tebuc 0",
+                                 dose == "t-5" ~ "Tebuc -5",
+                                 dose == "t-2" ~ "Tebuc -2",
+                                 dose == "t+2" ~ "Tebuc +2"),
+         treatment = factor(treatment, levels = c("Chi -5", "Chi -2", "Chi 0","Chi +2","Tebuc -5", 
+                                        "Tebuc -2", "Tebuc 0","Tebuc +2","NTC"))) %>%
+  group_by(treatment,dose, product, conc, rep, dpi) %>% 
+  summarise(sev_mean = mean(sev)) %>% 
+  na.omit() %>%
+  mutate(exp = "exp2")
+```
+
+### Summaries
+```{r}
+trial_field2 %>% 
+  ggplot(aes(treatment, sev_mean, fill =product))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(width =0.1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(y = "Severity (%)")
+
+trial_field2 %>% 
+  ggplot(aes(x = sev_mean))+
+  geom_histogram()+
+  theme_bw()
+
+trial_field2 %>% 
+  group_by(treatment) %>% 
+  rstatix::get_summary_stats(sev_mean, type = "full")
+```
+
+### Stats
+```{r}
+modelo <- aov(sev_mean ~ treatment, data = trial_field2)
+summary(modelo)
+
+shapiro.test(modelo$residuals)
+car::leveneTest(modelo)
+
+means_modelo <- emmeans (modelo, ~ "treatment" , type = "response")
+diferencas_letras <- cld(means_modelo, Letters = LETTERS)
+plot(means_modelo)
+```
+
+### Multcomp
+```{r}
+sev_campo2 <- diferencas_letras %>% 
+  left_join(trial_field2) %>% 
+  mutate(control = round((1-(emmean/71.1))*100,1)) %>% 
+  ggplot() +
+  geom_point(aes(treatment, emmean, color = product), size = 3) +
+  geom_errorbar(aes(treatment, emmean, color = product, ymin = lower.CL, ymax = upper.CL), size = 1,width = 0)+
+  geom_jitter(aes(treatment, sev_mean), size= 1, width =0.1, alpha = 0.7)+
+  labs (x = "Treatments",
+        y = "Severity (%)",
+        color = "Products") +
+  theme_bw() +
+  ggthemes::scale_color_calc()+
+  geom_text(aes(x = treatment, y = upper.CL +2, 
+                label = .group))+
+  ylim(-2,115)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.margin = unit(c(0.1, 0.1, -0.5, 0.1), "cm"),
+        legend.margin=margin(0,0,-.3,0,unit="cm"))
+
+(sev_campo | sev_campo2) +
+  plot_annotation(tag_levels = 'A')
+
+ggsave("figs/comb_sev_field.png", width = 7, height = 3.5, dpi = 600)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
