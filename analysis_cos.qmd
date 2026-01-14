@@ -13,7 +13,6 @@ library(tidyverse)
 library(readxl)
 library(easyanova)
 library(agricolae)
-library(easyanova)
 library(gsheet)
 library(ggrepel)
 library(ggthemes)
@@ -21,6 +20,8 @@ library(patchwork)
 library(emmeans)
 library(multcomp)
 library(car)
+library(rstatix)
+library(DHARMa)
 ```
 
 # GH 1
@@ -1688,22 +1689,257 @@ sev_campo2 <- diferencas_letras %>%
 ggsave("figs/comb_sev_field.png", width = 7, height = 3.5, dpi = 600)
 ```
 
+# Seeds treatment
+## Incidence
+### Assay 1
+```{r}
+seeds1 <- gsheet2tbl("https://docs.google.com/spreadsheets/d/1eqTN6_EYCDTN4YOPxylhLCNk56hfqCiL/edit#gid=1486428098") %>% 
+  mutate(inc = (dado/20)*100, 
+         exp = "exp1")
+```
 
+#### Stats
+```{r}
+modelo_seeds <- aov (inc ~ trat*inoc*desinf, data = seeds1)
+anova(modelo_seeds)
 
+shapiro.test(modelo_seeds$residuals)
+car::leveneTest(modelo_seeds)
+plot(simulateResiduals(modelo_seeds))
 
+means_modelo_seeds1 <- emmeans (modelo_seeds, ~ trat*inoc*desinf, type="response")
+means_modelo_seeds1
 
+## Treatments (inoc e desinf)
+emms <-  emmeans(means_modelo_seeds1, ~trat|inoc*desinf, type = "response")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
 
+## Method (trat e inoc)
+emms <-  emmeans(means_modelo_seeds1, ~desinf|trat*inoc, type = "response")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
 
+## inoc (trat e desinf)
+emms <-  emmeans(means_modelo_seeds1, ~inoc|desinf*trat, type = "response")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+```
 
+### Assay 2
+```{r}
+seeds2 <- gsheet2tbl("https://docs.google.com/spreadsheets/d/1eqTN6_EYCDTN4YOPxylhLCNk56hfqCiL/edit#gid=519843021")%>% 
+  mutate(inc = (dado/20)*100, 
+         exp = "exp2")
+```
 
+#### Stats
+```{r}
+modelo_seeds2 <- aov (asin(sqrt(inc/100)) ~ trat*inoc*desinf, data = seeds2)
+anova(modelo_seeds2)
 
+shapiro.test(modelo_seeds2$residuals)
+car::leveneTest(modelo_seeds2)
+plot(simulateResiduals(modelo_seeds2))
+```
 
+### Assay 3
+```{r}
+seeds3 <- gsheet2tbl("https://docs.google.com/spreadsheets/d/1eqTN6_EYCDTN4YOPxylhLCNk56hfqCiL/edit#gid=1920886148") %>% 
+  mutate(inc = (dado/20)*100,
+         exp = "exp3")
+```
 
+#### Stats
+```{r}
+modelo_seeds3 <- aov (inc ~ trat*inoc*desinf, data = seeds3)
+anova(modelo_seeds3)
 
+shapiro.test(modelo_seeds3$residuals)
+car::leveneTest(modelo_seeds3)
+plot(simulateResiduals(modelo_seeds3))
 
+means_modelo_seeds3 <- emmeans (modelo_seeds3, ~ trat*inoc*desinf, type="response")
+means_modelo_seeds3
 
+## trat (inoc e desinf)
+emms <-  emmeans(means_modelo_seeds3, ~trat|inoc*desinf, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
 
+## method (trat e inoc)
+emms <-  emmeans(means_modelo_seeds3, ~desinf|trat*inoc, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
 
+## inoc (trat e desinf)
+emms <-  emmeans(means_modelo_seeds3, ~inoc|desinf*trat, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+```
+
+### Combined assays
+```{r}
+comb <- seeds1 %>% rbind(seeds3) %>% 
+  mutate(trat = factor(trat, levels = c( "Sem tratamento", "Quitosana", "Tebuconazol")))
+
+modelo_comb <- aov (inc ~ trat*inoc*desinf*exp, data = comb)
+anova(modelo_comb)
+
+shapiro.test(modelo_comb$residuals)
+car::leveneTest(modelo_comb)
+plot(simulateResiduals(modelo_comb))
+
+means_modelo_comb <- emmeans (modelo_comb, ~ trat*inoc*desinf, type="response")
+means_modelo_comb
+
+## trat (inoc e desinf)
+emms <-  emmeans(means_modelo_comb, ~trat|inoc*desinf, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## method (trat e inoc)
+emms <-  emmeans(means_modelo_comb, ~desinf|trat*inoc, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## inoc (trat e desinf)
+emms <-  emmeans(means_modelo_comb, ~inoc|desinf*trat, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+```
+
+## Germination - Incidence
+### Assay 1
+```{r}
+germ1 <- gsheet2tbl("https://docs.google.com/spreadsheets/d/1yz3jDoaexiqR1uVBEZpQeOHaZ5tYXJIj/edit#gid=433997487") %>% 
+  mutate(inc = (`F. Graminearum`/20)*100,
+         podridao = (PPE/20)*100,
+         germ = (sementes_germinadas/20)*100,
+         exp = "exp1")
+```
+
+#### Stats
+```{r}
+modelogerm1 <- aov (asin(sqrt(inc/100)) ~ trat*inoc*desinf, data = germ1)
+anova(modelogerm1)
+
+shapiro.test(modelogerm1$residuals)
+car::leveneTest(modelogerm1)
+plot(simulateResiduals(modelogerm1))
+
+means_modelogerm1 <- emmeans (modelogerm1, ~ trat*inoc*desinf, type="response")
+means_modelogerm1
+
+## trat (inoc e desinf)
+emms <-  emmeans(means_modelogerm1, ~trat|inoc*desinf, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## method (trat e inoc)
+emms <-  emmeans(means_modelogerm1, ~desinf|trat*inoc, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## inoc (trat e desinf)
+emms <-  emmeans(means_modelogerm1, ~inoc|desinf*trat, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+```
+
+### Assay 2
+```{r}
+germ2 <- gsheet2tbl("https://docs.google.com/spreadsheets/d/1yz3jDoaexiqR1uVBEZpQeOHaZ5tYXJIj/edit#gid=70800705") %>%
+  na.omit(sementes_germinadas) %>% 
+  mutate(inc = (`F. Graminearum`/20)*100,
+         podridao = (PPE/20)*100,
+         germ = (sementes_germinadas/20)*100,
+         exp = "exp2")
+```
+
+#### Stats
+```{r}
+modelogerm2 <- aov (inc ~ trat*inoc*desinf, data = germ2)
+anova(modelogerm2)
+
+shapiro.test(modelogerm2$residuals)
+car::leveneTest(modelogerm2)
+plot(simulateResiduals(modelogerm2))
+```
+
+### Assay 3
+```{r}
+germ3 <- gsheet2tbl("https://docs.google.com/spreadsheets/d/1yz3jDoaexiqR1uVBEZpQeOHaZ5tYXJIj/edit#gid=1552150551") %>%
+  mutate(inc = (`F. Graminearum`/20)*100,
+         podridao = (PPE/20)*100,
+         germ = (sementes_germinadas/20)*100,
+         exp = "exp3")
+```
+
+#### Stats
+```{r}
+modelogerm3 <- aov (inc ~ trat*inoc*desinf, data = germ3)
+anova(modelogerm3)
+
+shapiro.test(modelogerm3$residuals)
+car::leveneTest(modelogerm3)
+plot(simulateResiduals(modelogerm3))
+```
+
+### Combined assays
+```{r}
+comb_germ <- germ1 %>% rbind(germ3)
+
+modelo_comb1 <- aov (sqrt(log(inc+0.005)) ~ trat*inoc*desinf*exp, data = comb_germ)
+anova(modelo_comb1)
+
+shapiro.test(modelo_comb1$residuals)
+car::leveneTest(modelo_comb1)
+plot(simulateResiduals(modelo_comb1))
+
+means_modelo_comb1 <- emmeans (modelo_comb1, ~ trat*inoc*desinf, type="response")
+means_modelo_comb1
+
+## trat (inoc e desinf)
+emms <-  emmeans(means_modelo_comb1, ~trat|inoc*desinf, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## method (trat e inoc)
+emms <-  emmeans(means_modelo_comb1, ~desinf|trat*inoc, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## inoc (trat e desinf)
+emms <-  emmeans(means_modelo_comb1, ~inoc|desinf*trat, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+```
+
+#### Stats - Germination
+```{r}
+modelo_comb2 <- aov (germ~ trat*inoc*desinf*exp, data = comb_germ)
+anova(modelo_comb2)
+
+shapiro.test(modelo_comb2$residuals)
+car::leveneTest(modelo_comb2)
+plot(simulateResiduals(modelo_comb2))
+
+means_modelo_comb2 <- emmeans (modelo_comb2, ~ trat*inoc*desinf, type="response")
+means_modelo_comb2
+
+## trat (inoc e desinf)
+emms <-  emmeans(means_modelo_comb2, ~trat|inoc*desinf, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## method (trat e inoc)
+emms <-  emmeans(means_modelo_comb2, ~desinf|trat*inoc, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+
+## inoc (trat e desinf)
+emms <-  emmeans(means_modelo_comb2, ~inoc|desinf*trat, type = "response")
+contrast(emms, interaction = "pairwise")
+cld(emms, interaction = "pairwise", Letters = LETTERS)
+```
 
 
 
